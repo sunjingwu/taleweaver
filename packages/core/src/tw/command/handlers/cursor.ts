@@ -4,6 +4,7 @@ import { IAtomicRenderNode } from '../../render/atomic-node';
 import { identifyRenderNodeType } from '../../render/utility';
 import { Transformation } from '../../state/transformation';
 import { ICommandHandler } from '../command';
+import { IRenderPosition } from '../../render/node';
 
 export const move: ICommandHandler = async (serviceRegistry, offset: number) => {
     const tn = new Transformation();
@@ -135,7 +136,7 @@ export const moveLeftByWord: ICommandHandler = async serviceRegistry => {
     }
     const tn = new Transformation();
     const cursorState = cursorService.getCursorState();
-    const offset = cursorState.head;
+    const offset = Math.min(cursorState.anchor, cursorState.head);
     const position = renderService.resolvePosition(offset);
     const atomicPosition = position.getLeaf();
     const atomicNode = atomicPosition.getNode();
@@ -163,7 +164,7 @@ export const moveRightByWord: ICommandHandler = async serviceRegistry => {
     }
     const tn = new Transformation();
     const cursorState = cursorService.getCursorState();
-    const offset = cursorState.head;
+    const offset = Math.max(cursorState.anchor, cursorState.head);
     const position = renderService.resolvePosition(offset);
     const atomicPosition = position.getLeaf();
     const atomicNode = atomicPosition.getNode();
@@ -195,7 +196,7 @@ export const moveToLineStart: ICommandHandler = async serviceRegistry => {
     }
     const tn = new Transformation();
     const cursorState = cursorService.getCursorState();
-    const offset = cursorState.head;
+    const offset = Math.min(cursorState.anchor, cursorState.head);
     const position = layoutService.resolvePosition(offset);
     const lineBoxLevelPosition = position
         .getLeaf()
@@ -217,7 +218,7 @@ export const moveToLineEnd: ICommandHandler = async serviceRegistry => {
     }
     const tn = new Transformation();
     const cursorState = cursorService.getCursorState();
-    const offset = cursorState.head;
+    const offset = Math.max(cursorState.anchor, cursorState.head);
     const position = layoutService.resolvePosition(offset);
     const lineLayoutPosition = position
         .getLeaf()
@@ -501,3 +502,48 @@ export const selectAll: ICommandHandler = async serviceRegistry => {
     tn.setCursorHead(docSize - 1);
     serviceRegistry.getService('state').applyTransformation(tn);
 };
+
+export const selectWord: ICommandHandler = async (serviceRegistry, offset: number) => {
+    const cursorService = serviceRegistry.getService('cursor');
+    const renderService = serviceRegistry.getService('render');
+    if (!cursorService.hasCursor()) {
+        return;
+    }
+    const tn = new Transformation();
+    const position = renderService.resolvePosition(offset);
+    const atomicPosition = position.getLeaf();
+    const atomicNode = atomicPosition.getNode();
+    tn.setCursor(offset - atomicPosition.getOffset());
+    tn.setCursorHead(offset - atomicPosition.getOffset() + atomicNode.getSize() - 1);
+    serviceRegistry.getService('state').applyTransformation(tn);
+};
+
+export const selectBlock: ICommandHandler = async (serviceRegistry, offset: number) => {
+    const cursorService = serviceRegistry.getService('cursor');
+    const renderService = serviceRegistry.getService('render');
+    if (!cursorService.hasCursor()) {
+        return;
+    }
+    const tn = new Transformation();
+    const position = renderService.resolvePosition(offset);
+    const atomicPosition = position.getLeaf();
+    const blockPosition = searchBlockRenderPositionBottomUp(atomicPosition);
+    if (!blockPosition) {
+        return;
+    }
+    const blockNode = blockPosition.getNode();
+    tn.setCursor(offset - blockPosition.getOffset());
+    tn.setCursorHead(offset - blockPosition.getOffset() + blockNode.getSize() - 1);
+    serviceRegistry.getService('state').applyTransformation(tn);
+};
+
+function searchBlockRenderPositionBottomUp(position: IRenderPosition): IRenderPosition | null {
+    if (identifyRenderNodeType(position.getNode()) === 'block') {
+        return position;
+    }
+    const parent = position.getParent();
+    if (!parent) {
+        return null;
+    }
+    return searchBlockRenderPositionBottomUp(parent);
+}

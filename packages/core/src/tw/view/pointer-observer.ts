@@ -3,29 +3,45 @@ import { IEventListener } from '../event/listener';
 import { IViewService } from './service';
 
 export interface IPointerDidDownEvent {
-    inPage: boolean;
     offset: number;
+    consecutive: boolean;
 }
 
 export interface IPointerDidMoveEvent {
-    inPage: boolean;
     pointerDown: boolean;
     offset: number;
 }
 
 export interface IPointerDidUpEvent {}
 
+export interface IPointerDidClick {
+    offset: number;
+    consecutiveCount: number;
+}
+
 export interface IPointerObserver {
     onPointerDidDown(listener: IEventListener<IPointerDidDownEvent>): void;
     onPointerDidMove(listener: IEventListener<IPointerDidMoveEvent>): void;
     onPointerDidUp(listener: IEventListener<IPointerDidUpEvent>): void;
+    onPointerDidClick(listener: IEventListener<IPointerDidClick>): void;
 }
 
 export class PointerObserver implements IPointerObserver {
-    protected pointerDown = false;
+    protected clickThreshold = 250;
+    protected consecutiveClickThreshold = 250;
+    protected lastPointerDown: {
+        timestamp: number;
+        offset: number;
+    } | null = null;
+    protected lastClick: {
+        timestamp: number;
+        offset: number;
+    } | null = null;
+    protected consecutiveClickCount: number = 0;
     protected pointerDidDownEventEmitter: IEventEmitter<IPointerDidDownEvent> = new EventEmitter();
     protected pointerDidMoveEventEmitter: IEventEmitter<IPointerDidMoveEvent> = new EventEmitter();
     protected pointerDidUpEventEmitter: IEventEmitter<IPointerDidUpEvent> = new EventEmitter();
+    protected pointerDidClickEventEmitter: IEventEmitter<IPointerDidClick> = new EventEmitter();
 
     constructor(protected instanceId: string, protected viewService: IViewService) {
         window.addEventListener('mousedown', this.handleMouseDown);
@@ -45,6 +61,10 @@ export class PointerObserver implements IPointerObserver {
         this.pointerDidUpEventEmitter.on(listener);
     }
 
+    onPointerDidClick(listener: IEventListener<IPointerDidClick>) {
+        this.pointerDidClickEventEmitter.on(listener);
+    }
+
     protected handleMouseDown = (event: MouseEvent) => {
         const offset = this.resolveCoordinates(event.clientX, event.clientY);
         if (offset === null) {
@@ -52,11 +72,13 @@ export class PointerObserver implements IPointerObserver {
         }
         // Bypass browser selection
         event.preventDefault();
-        this.pointerDown = true;
-        this.pointerDidDownEventEmitter.emit({
-            inPage: this.isDOMElementInPage(event.target as HTMLElement),
+        this.lastPointerDown = {
+            timestamp: Date.now(),
             offset,
-        });
+        };
+        const consecutive =
+            this.lastClick !== null && Date.now() - this.lastClick.timestamp < this.consecutiveClickThreshold;
+        this.pointerDidDownEventEmitter.emit({ offset, consecutive });
     };
 
     protected handleMouseMove = (event: MouseEvent) => {
@@ -65,15 +87,41 @@ export class PointerObserver implements IPointerObserver {
             return;
         }
         this.pointerDidMoveEventEmitter.emit({
-            inPage: this.isDOMElementInPage(event.target as HTMLElement),
-            pointerDown: this.pointerDown,
+            pointerDown: this.lastPointerDown !== null,
             offset,
         });
     };
 
-    protected handleMouseUp = () => {
-        this.pointerDown = false;
+    protected handleMouseUp = (event: MouseEvent) => {
+        if (this.lastPointerDown === null) {
+            return;
+        }
+        const lastPointerDown = this.lastPointerDown;
+        this.lastPointerDown = null;
+        const offset = this.resolveCoordinates(event.clientX, event.clientY);
+        if (offset === null) {
+            return;
+        }
+        const now = Date.now();
+        const clicked = lastPointerDown.offset === offset && now - lastPointerDown.timestamp < this.clickThreshold;
         this.pointerDidUpEventEmitter.emit({});
+        if (clicked) {
+            if (this.lastClick !== null) {
+                const delta = now - this.lastClick.timestamp;
+                if (delta > this.consecutiveClickThreshold) {
+                    this.consecutiveClickCount = 0;
+                }
+            }
+            this.consecutiveClickCount++;
+            this.lastClick = {
+                timestamp: Date.now(),
+                offset,
+            };
+            this.pointerDidClickEventEmitter.emit({
+                offset,
+                consecutiveCount: this.consecutiveClickCount,
+            });
+        }
     };
 
     protected resolveCoordinates(x: number, y: number): number | null {
@@ -96,19 +144,5 @@ export class PointerObserver implements IPointerObserver {
             cumulatedOffset += pageLayoutNode.getSize();
         }
         return null;
-    }
-
-    protected isDOMElementInPage(domElement: HTMLElement | null) {
-        let current: HTMLElement | null = domElement;
-        while (current) {
-            const instanceId = current.getAttribute('data-tw-instance');
-            const componentId = current.getAttribute('data-tw-component');
-            const partId = current.getAttribute('data-tw-part');
-            if (instanceId === this.instanceId && componentId === 'page' && partId === 'page') {
-                return true;
-            }
-            current = current.parentElement;
-        }
-        return false;
     }
 }
