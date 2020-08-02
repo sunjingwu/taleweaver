@@ -1,16 +1,25 @@
 import { ICommandHandler } from '../command/command';
 import { IComponent } from '../component/component';
+import { IServiceRegistry } from '../service/registry';
+
+interface IComponentClass {
+    new (id: string, serviceRegistry: IServiceRegistry): IComponent;
+}
 
 export interface ICommandsConfig {
     [key: string]: ICommandHandler;
 }
 
 export interface IComponentsConfig {
-    [key: string]: IComponent;
+    [key: string]: IComponentClass;
 }
 
 export interface ICursorConfig {
     disable: boolean;
+    caretColor: string;
+    caretInactiveColor: string;
+    selectionColor: string;
+    selectionInactiveColor: string;
 }
 
 export interface IHistoryConfig {
@@ -22,6 +31,7 @@ export interface IPlatformKeyBindings {
     [key: string]: {
         command: string;
         args?: any[];
+        preventDefault?: boolean;
     };
 }
 

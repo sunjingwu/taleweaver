@@ -1,24 +1,26 @@
 import { IComponentService } from '../component/service';
 import { IEventListener } from '../event/listener';
+import { IModelPosition } from '../model/position';
 import { IModelService } from '../model/service';
-import { IDocRenderNode } from './doc-node';
-import { IRenderNode, IRenderPosition, IStyle } from './node';
+import { IFont } from '../text/service';
+import { IRenderDoc } from './doc';
+import { IRenderNode } from './node';
+import { IRenderPosition, IResolvedRenderPosition } from './position';
 import { IDidUpdateRenderStateEvent, IRenderState, RenderState } from './state';
+import { IRenderText } from './text';
 
-export interface IStyles {
-    [componentId: string]: {
-        [partId: string]: IStyle[];
-    };
-}
+export type IResolvedFont = {
+    [TKey in keyof IFont]: IFont[TKey] | null;
+};
 
 export interface IRenderService {
     onDidUpdateRenderState(listener: IEventListener<IDidUpdateRenderStateEvent>): void;
-    getDocNode(): IDocRenderNode;
+    getDoc(): IRenderDoc<any, any>;
     getDocSize(): number;
-    convertOffsetToModelOffset(offset: number): number;
-    convertModelOffsetToOffset(modelOffset: number): number;
-    resolvePosition(offset: number): IRenderPosition;
-    getStylesBetween(from: number, to: number): IStyles;
+    resolvePosition(position: IRenderPosition): IResolvedRenderPosition;
+    resolveFont(from: IRenderPosition, to: IRenderPosition): IResolvedFont;
+    convertModelToRenderPosition(modelPosition: IModelPosition): IRenderPosition;
+    convertRenderToModelPosition(renderPosition: IRenderPosition): IModelPosition;
 }
 
 export class RenderService implements IRenderService {
@@ -32,52 +34,69 @@ export class RenderService implements IRenderService {
         this.state.onDidUpdateRenderState(listener);
     }
 
-    getDocNode() {
-        return this.state.getDocNode();
+    getDoc() {
+        return this.state.doc;
     }
 
     getDocSize() {
-        return this.state.getDocNode().getSize();
+        return this.state.doc.size;
     }
 
-    convertOffsetToModelOffset(offset: number) {
-        return this.state.getDocNode().convertOffsetToModelOffset(offset);
+    resolvePosition(position: IRenderPosition) {
+        return this.state.doc.resolvePosition(position);
     }
 
-    convertModelOffsetToOffset(modelOffset: number) {
-        return this.state.getDocNode().convertModelOffsetToOffset(modelOffset);
-    }
-
-    resolvePosition(offset: number) {
-        return this.state.getDocNode().resolvePosition(offset);
-    }
-
-    getStylesBetween(from: number, to: number) {
-        const styles: IStyles = {};
-        const docNode = this.state.getDocNode();
-        this.extractStyle(styles, docNode, from, to);
-        return styles;
-    }
-
-    protected extractStyle(styles: IStyles, node: IRenderNode, from: number, to: number) {
-        if (from > to) {
-            return;
-        }
-        const componentStyles = (styles[node.getComponentId()] = styles[node.getComponentId()] || {});
-        const partStyles = (componentStyles[node.getPartId()] = componentStyles[node.getPartId()] || []);
-        partStyles.push(node.getStyle());
-        let position = 0;
-        if (node.isLeaf()) {
-            return;
-        }
-        node.getChildren().forEach(child => {
-            const childSize = child.getSize();
-            if (0 <= to - position && from - position <= childSize) {
-                const childFrom = Math.max(0, Math.min(childSize, from - position));
-                const childTo = Math.max(0, Math.min(childSize, to - position));
-                this.extractStyle(styles, child, childFrom, childTo);
+    resolveFont(from: IRenderPosition, to: IRenderPosition) {
+        const resolvedFont: Partial<IResolvedFont> = {};
+        const nodeQueue: [IRenderNode<any, any>, number][] = [[this.state.doc, 0]];
+        while (nodeQueue.length > 0) {
+            const [node, nodeFrom] = nodeQueue.shift()!;
+            if (node.text) {
+                const nodeFont = (node as IRenderText<any, any>).font;
+                let fontProp: keyof IFont;
+                for (fontProp in nodeFont) {
+                    if (!(fontProp in resolvedFont)) {
+                        (resolvedFont as any)[fontProp] = nodeFont[fontProp];
+                    } else if (resolvedFont[fontProp] !== nodeFont[fontProp]) {
+                        resolvedFont[fontProp] = null;
+                    }
+                }
+            } else {
+                let childOffset = 0;
+                node.children.forEach((child, childIndex) => {
+                    const childSize = child.size;
+                    const childFrom = nodeFrom + childOffset;
+                    const childTo = childFrom + childSize;
+                    let intersect: boolean;
+                    if (from === to) {
+                        intersect = childFrom <= to && childTo > from;
+                    } else {
+                        intersect = childFrom < to && childTo > from;
+                    }
+                    if (intersect) {
+                        nodeQueue.push([child, childFrom]);
+                    }
+                    childOffset += childSize;
+                });
             }
-            position += childSize;
-        });
+        }
+        return {
+            weight: resolvedFont.weight ?? null,
+            size: resolvedFont.size ?? null,
+            family: resolvedFont.family ?? null,
+            letterSpacing: resolvedFont.letterSpacing ?? null,
+            underline: resolvedFont.underline ?? null,
+            italic: resolvedFont.italic ?? null,
+            strikethrough: resolvedFont.strikethrough ?? null,
+            color: resolvedFont.color ?? null,
+        };
+    }
+
+    convertModelToRenderPosition(modelPosition: IModelPosition) {
+        return this.state.doc.convertModelToRenderPosition(modelPosition);
+    }
+
+    convertRenderToModelPosition(renderPosition: IRenderPosition) {
+        return this.state.doc.convertRenderToModelPosition(renderPosition);
     }
 }

@@ -1,38 +1,39 @@
-import { IComponentService } from '../component/service';
 import { IEventListener } from '../event/listener';
+import { IRenderPosition } from '../render/position';
 import { IRenderService } from '../render/service';
-import { IDocLayoutNode } from './doc-node';
-import { ILayoutPosition } from './node';
-import { IPageLayoutRect } from './rect';
+import { ITextService } from '../text/service';
+import { IResolvedBoundingBoxes } from './bounding-box';
+import { ILayoutDoc } from './doc';
+import { IResolvedLayoutPosition } from './position';
 import { IDidUpdateLayoutStateEvent, ILayoutState, LayoutState } from './state';
 
 export interface ILayoutService {
     onDidUpdateLayoutState(listener: IEventListener<IDidUpdateLayoutStateEvent>): void;
-    getDocNode(): IDocLayoutNode;
-    resolvePosition(offset: number): ILayoutPosition;
-    resolvePageRects(from: number, to: number): IPageLayoutRect[];
+    getDoc(): ILayoutDoc;
+    resolvePosition(position: IRenderPosition): IResolvedLayoutPosition;
+    resolveBoundingBoxes(from: IRenderPosition, to: IRenderPosition): IResolvedBoundingBoxes;
 }
 
 export class LayoutService implements ILayoutService {
     protected state: ILayoutState;
 
-    constructor(componentService: IComponentService, renderService: IRenderService) {
-        this.state = new LayoutState(componentService, renderService);
+    constructor(renderService: IRenderService, textService: ITextService) {
+        this.state = new LayoutState(renderService, textService);
     }
 
     onDidUpdateLayoutState(listener: IEventListener<IDidUpdateLayoutStateEvent>) {
         this.state.onDidUpdateLayoutState(listener);
     }
 
-    getDocNode() {
-        return this.state.getDocNode();
+    getDoc() {
+        return this.state.doc;
     }
 
-    resolvePosition(offset: number) {
-        return this.state.getDocNode().resolvePosition(offset);
+    resolvePosition(position: IRenderPosition) {
+        return this.state.doc.resolvePosition(position);
     }
 
-    resolvePageRects(from: number, to: number) {
-        return this.state.getDocNode().resolvePageRects(from, to);
+    resolveBoundingBoxes(from: IRenderPosition, to: IRenderPosition) {
+        return this.state.doc.resolveBoundingBoxes(from, to);
     }
 }

@@ -1,6 +1,9 @@
 import { ICommandService } from '../command/service';
+import { IDOMService } from '../dom/service';
 import { IEventListener } from '../event/listener';
-import { ClipboardObserver, IClipboardObserver } from './clipboard-observer';
+import { ILayoutService } from '../layout/service';
+import { IModelService } from '../model/service';
+import { ClipboardObserver, IClipboardObserver, IDidCopyEvent, IDidPasteEvent } from './clipboard-observer';
 import { FocusObserver, IDidBlurEvent, IDidFocusEvent, IFocusObserver } from './focus-observer';
 import {
     ICompositionDidEnd,
@@ -11,11 +14,11 @@ import {
     KeyboardObserver,
 } from './keyboard-observer';
 import {
+    IPointerDidClick,
     IPointerDidDownEvent,
     IPointerDidMoveEvent,
     IPointerObserver,
     PointerObserver,
-    IPointerDidClick,
 } from './pointer-observer';
 import { IViewService } from './service';
 
@@ -31,7 +34,7 @@ export interface IDOMController {
 }
 
 export class DOMController {
-    protected $iframe: HTMLIFrameElement;
+    protected iframe: HTMLIFrameElement;
     protected $contentEditable: HTMLDivElement;
     protected keyboardObserver: IKeyboardObserver;
     protected pointerObserver: IPointerObserver;
@@ -43,16 +46,19 @@ export class DOMController {
 
     constructor(
         protected instanceId: string,
+        protected domService: IDOMService,
         protected commandService: ICommandService,
+        protected modelService: IModelService,
         protected viewService: IViewService,
+        protected layoutService: ILayoutService,
     ) {
-        this.$iframe = this.createIframe();
+        this.iframe = domService.createHiddenIframe();
         this.$contentEditable = this.createContentEditable();
-        this.keyboardObserver = new KeyboardObserver(this.$contentEditable);
+        this.keyboardObserver = new KeyboardObserver(this.$contentEditable, domService);
         this.keyboardObserver.onDidInsert(this.handleDidInsert);
         this.keyboardObserver.onCompositionDidStart(this.handleCompositionDidStart);
         this.keyboardObserver.onCompositionDidEnd(this.handleCompositionDidEnd);
-        this.pointerObserver = new PointerObserver(instanceId, viewService);
+        this.pointerObserver = new PointerObserver(instanceId, viewService, domService, layoutService);
         this.pointerObserver.onPointerDidDown(this.handlePointerDidDown);
         this.pointerObserver.onPointerDidMove(this.handlePointerDidMove);
         this.pointerObserver.onPointerDidClick(this.handlePointerDidClick);
@@ -60,6 +66,8 @@ export class DOMController {
         this.focusObserver.onDidFocus(this.handleDidFocus);
         this.focusObserver.onDidBlur(this.handleDidBlur);
         this.clipboardObserver = new ClipboardObserver(this.$contentEditable);
+        this.clipboardObserver.onDidCopy(this.handleCopy);
+        this.clipboardObserver.onDidPaste(this.handlePaste);
     }
 
     onDidPressKey(listener: IEventListener<IDidPressKeyEvent>) {
@@ -75,9 +83,9 @@ export class DOMController {
     }
 
     attach() {
-        document.body.appendChild(this.$iframe);
+        this.domService.getBody().appendChild(this.iframe);
         setTimeout(() => {
-            this.$iframe.contentDocument!.body.appendChild(this.$contentEditable);
+            this.iframe.contentDocument!.body.appendChild(this.$contentEditable);
         });
     }
 
@@ -98,7 +106,7 @@ export class DOMController {
     }
 
     protected handleDidInsert = (event: IDidInsertEvent) => {
-        this.commandService.executeCommand('tw.state.insert', event.tokens);
+        this.commandService.executeCommand('tw.state.insert', event.content);
     };
 
     protected handleCompositionDidStart = (event: ICompositionDidStart) => {
@@ -126,16 +134,17 @@ export class DOMController {
 
     protected handlePointerDidClick = (event: IPointerDidClick) => {
         switch (event.consecutiveCount) {
-            case 1: {
+            case 1:
                 break;
-            }
             case 2:
                 this.commandService.executeCommand('tw.cursor.selectWord', event.offset);
                 break;
             case 3:
-            default:
                 this.commandService.executeCommand('tw.cursor.selectBlock', event.offset);
                 break;
+            case 4:
+            default:
+                this.commandService.executeCommand('tw.cursor.selectAll');
         }
     };
 
@@ -147,24 +156,25 @@ export class DOMController {
         this.focused = false;
     };
 
-    protected createIframe() {
-        const $iframe = document.createElement('iframe');
-        $iframe.scrolling = 'no';
-        $iframe.src = 'about:blank';
-        $iframe.style.width = '0';
-        $iframe.style.height = '0';
-        $iframe.style.border = 'none';
-        $iframe.style.position = 'fixed';
-        $iframe.style.zIndex = '-1';
-        $iframe.style.opacity = '0';
-        $iframe.style.overflow = 'hidden';
-        $iframe.style.left = '0';
-        $iframe.style.top = '0';
-        return $iframe;
-    }
+    protected handleCopy = (event: IDidCopyEvent) => {
+        this.commandService.executeCommand('tw.clipboard.copy');
+    };
+
+    protected handlePaste = (event: IDidPasteEvent) => {
+        const html = event.data.getData('text/html');
+        const $container = this.domService.createElement('html');
+        $container.innerHTML = html;
+        const $body = $container.querySelector('body');
+        if (!$body) {
+            return;
+        }
+        const domNodes = Array.prototype.slice.call($body.children) as HTMLElement[];
+        console.log(domNodes);
+        // TODO
+    };
 
     protected createContentEditable() {
-        const $contentEditable = document.createElement('div');
+        const $contentEditable = this.domService.createElement('div');
         $contentEditable.contentEditable = 'true';
         $contentEditable.style.whiteSpace = 'pre';
         return $contentEditable;
